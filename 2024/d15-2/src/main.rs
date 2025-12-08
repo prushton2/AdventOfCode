@@ -17,7 +17,6 @@ enum Object {
     Wall
 }
 
-
 fn main() {
     let file = fs::read_to_string("./src/input.txt").expect("Error reading input");
     let binding = file.split("\n\n").collect::<Vec<&str>>();
@@ -71,6 +70,8 @@ fn main() {
                 ((robot_pos.0 as isize) + dir.0) as usize, 
                 ((robot_pos.1 as isize) + dir.1) as usize
             );
+
+            print_map(&map);
         }
     }
     
@@ -88,7 +89,7 @@ fn main() {
         }
     }
 
-    println!("Sum: {gps_sum}\nObj difference: {obj_count}"); // sum should be 1319212
+    println!("Sum: {gps_sum} \nObj difference: {obj_count} ({})", if obj_count == 0 { "Good" } else { "Objects were created or destroyed" });
 
 
 }
@@ -103,70 +104,71 @@ fn move_to_dir(m: Move) -> (isize, isize) {
 }
 
 fn move_object(map: &mut Vec<Vec<Object>>, pos: (usize, usize), dir: (isize, isize)) -> bool {
+    let mut prerequisites: Vec<(usize, usize)> = vec![pos];
 
-    let target_pos = (pos.0 as isize + dir.0, pos.1 as isize + dir.1);
+    let mut i = 0;
+    while i < prerequisites.len() {
+        println!("{:?}", prerequisites);
+        let item = prerequisites[i];
 
-    if target_pos.0 < 0 || target_pos.0 >= map[0].len() as isize || target_pos.1 < 0 || target_pos.1 >= map.len() as isize {
-        return false; // cant move off map
-    }
+        let target = (
+            ((item.0 as isize) + dir.0) as usize,
+            ((item.1 as isize) + dir.1) as usize
+        );
 
-    let target_pos = (target_pos.0 as usize, target_pos.1 as usize);
-    let pos_char = map[pos.1][pos.0];
-
-    match pos_char {
-        Object::Wall => {
-            return false
-        },
-        Object::Robot => {
-            if move_object(map, target_pos, dir) {
-                map[target_pos.1][target_pos.0] = Object::Robot;
-                map[pos.1][pos.0] = Object::Empty;
-                return true;
+        match map[target.1][target.0] {
+            Object::Empty => {}
+            Object::Wall => return false,
+            Object::Robot => {
+                panic!("How did we get here")
             }
-            return false
-        },
-        Object::ObjectLeft => {
-            let twin_pos = (pos.0+1, pos.1);
-            let twin_target = (target_pos.0+1, target_pos.1);
-
-            if dir.1 != 0 {
-                if move_object(map, target_pos, dir) && move_object(map, twin_target, dir) {
-                    map[target_pos.1][target_pos.0] = Object::ObjectLeft;
-                    map[twin_target.1][twin_target.0] = Object::ObjectRight;
-                    map[pos.1][pos.0] = Object::Empty;
-                    map[twin_pos.1][twin_pos.0] = Object::Empty;
-                    return true
+            Object::ObjectLeft => {
+                println!("Left object at {:?}", target);
+                let twin = (target.0 + 1, target.1);
+                if !prerequisites.contains(&target) {
+                    println!(" Adding self");
+                    prerequisites.push(target)
                 }
-                return false;
+                if !prerequisites.contains(&twin) {
+                    println!(" Adding twin");
+                    prerequisites.push(twin)
+                }
             }
-
-            if move_object(map, target_pos, dir) {
-                map[target_pos.1][target_pos.0] = Object::ObjectLeft;
-                map[pos.1][pos.0] = Object::Empty;
-                return true;
+            Object::ObjectRight => {
+                println!("Right object at {:?}", target);
+                let twin = (target.0 - 1, target.1);
+                if !prerequisites.contains(&target) {
+                    println!(" Adding self");
+                    prerequisites.push(target)
+                }
+                if !prerequisites.contains(&twin) {
+                    println!(" Adding twin");
+                    prerequisites.push(twin)
+                }
             }
-
-            return false
-        },
-        Object::ObjectRight => {
-            let twin = (pos.0-1, pos.1);
-            if dir.1 != 0 {
-                return move_object(map, twin, dir)
-            }
-
-            if move_object(map, target_pos, dir) {
-                map[target_pos.1][target_pos.0] = Object::ObjectRight;
-                map[pos.1][pos.0] = Object::Empty;
-                return true;
-            }
-
-            return false
-        },
-        Object::Empty => {
-            return true
         }
+        i += 1;
     }
+
+    println!("Passed dependency check, moving...");
+
+    for i in 0..prerequisites.len() {
+        let item = prerequisites[prerequisites.len() - i-1];
+        let target = (
+            (item.0 as isize + dir.0)as usize,
+            (item.1 as isize + dir.1)as usize
+        );
+        
+        let temp = map[item.1][item.0];
+        map[item.1][item.0] = map[target.1][target.0];
+        map[target.1][target.0] = temp;
+    }
+
+    println!("Moved");
+
+    return true
 }
+
 
 fn print_map(map: &Vec<Vec<Object>>) {
     for y in 0..map.len() {
