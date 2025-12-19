@@ -1,8 +1,10 @@
-use std::cmp::min;
-use std::collections::{HashSet, HashMap, VecDeque};
+use std::cmp::{Reverse, min};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fs;
+use std::hash::Hash;
 
-static DEBUG_POS: (usize, usize) = (5, 7);
+static DEBUG_POS: (usize, usize) = (15, 7);
+static DEBUG_ALL: bool = false;
 
 #[derive(Copy, Clone, PartialEq)]
 enum Pos {
@@ -13,7 +15,7 @@ enum Pos {
     Passed
 }
 
-#[derive(Copy, Clone, PartialEq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 enum Direction {
     North = 0,
     East = 1,
@@ -41,21 +43,50 @@ impl Direction {
     }
     pub fn difference(&self, other: &Self) -> i32 {
         let diff = (self.to_i32() - other.to_i32()).abs();
-        if diff == 3 {
-            return 1
+        min(diff, 4-diff)
+    }
+    pub fn invert(&self) -> Self {
+        match self {
+            Direction::North => Direction::South,
+            Direction::South => Direction::North,
+            Direction::East =>  Direction::West,
+            Direction::West =>  Direction::East,
         }
-        diff
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 struct PathfindingPosition {
     pos: (usize, usize),
     dir: Direction,
-    cost: u64,
-    depth: u64
-    // past_tiles: HashSet<(usize, usize)>
+    cost: u64
 }
+
+impl Ord for PathfindingPosition {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        return self.cost.cmp(&other.cost);
+    }
+}
+
+impl PartialEq for PathfindingPosition {
+    fn eq(&self, other: &Self) -> bool {
+        return self.cost == other.cost;
+    }
+    fn ne(&self, other: &Self) -> bool {
+        return self.cost != other.cost;
+    }
+}
+
+impl PartialOrd for PathfindingPosition {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        return Some(self.cost.cmp(&other.cost))
+    }
+}
+
+impl Eq for PathfindingPosition {
+
+}
+
 
 fn main() {
     let file = fs::read_to_string("./src/input.txt").expect("Error reading input");
@@ -119,142 +150,113 @@ fn main() {
 
 }
 
-fn crawl_path(map: &Vec<Vec<Pos>>, start: (usize, usize), end: (usize, usize), facing: Direction) -> Vec<(usize, usize)> {
+fn crawl_path(map: &Vec<Vec<Pos>>, start: (usize, usize), end: (usize, usize), facing: Direction) -> HashSet<(usize, usize)> {
 
+    // the idea here is that instead of a tile being a state, the state is a tile and a direction. ie ((0, 3) North) != ((0, 3), East)
+    // each state has a cost and parents that point there, and we keep track of all valid parents
+
+    let mut queue: BinaryHeap<Reverse<PathfindingPosition>> = BinaryHeap::new();
     let directions: [(isize, isize); 4] = [(0, -1), (1, 0), (0, 1), (-1, 0)];
+    
     let mut min_cost = u64::MAX;
-    let mut queue: VecDeque<PathfindingPosition> = [PathfindingPosition{pos: start, dir: facing, cost: 0, depth: 0}].into();
-    let mut visited: HashMap<(usize, usize), u64> = [].into();
-    let mut parents: HashMap<(usize, usize), Vec<(usize, usize)>> = [].into();
+    let mut end_states: Vec<((usize, usize), Direction)> = vec![]; // this is particularly useful in knowing where to start when backtracking
+
+    let mut cost_map: HashMap<((usize, usize), Direction), u64> = [].into();
+    //                             state                   cost
+    let mut parents: HashMap<((usize, usize), Direction), Vec<((usize, usize), Direction)>> = [].into();
+    //                             state                            parents
+
+    queue.push(Reverse(PathfindingPosition { pos: start, dir: facing, cost: 0 }));
+    cost_map.insert((start, facing), 0);
 
     while queue.len() > 0 {
-        let front: PathfindingPosition = match queue.pop_front() {
-            Some(t) => t,
+        let front: PathfindingPosition = match queue.pop() {
+            Some(Reverse(t)) => t,
             None => break
         };
 
-        let pos = front.pos;
-        // println!("\n[{}]; {:?}: ", queue.len(), pos);
-
-        if front.cost > min_cost {
+        // println!("At {:?} facing {:?} with a cost of {}", front.pos, front.dir, front.cost);
+        
+        // if we are costing more than the cheapest way to get to where we are, skip
+        if front.cost > *cost_map.get(&(front.pos, front.dir)).unwrap_or(&u64::MAX) {
             continue
         }
-
-        if pos == end {
-            min_cost = front.cost;
-            continue
+        
+        if front.pos == end {
+            // new lowest cost?
+            if front.cost < min_cost {
+                // there can only be one
+                min_cost = front.cost;
+                end_states.clear();
+                end_states.push((front.pos, front.dir));
+            } else if front.cost == min_cost {
+                // there can be multiple
+                end_states.push((front.pos, front.dir));
+            }
+            continue;
         }
 
         for i in 0..4 {
+            // get our next tile
             let direction = directions[i];
-            let target: (usize, usize) = (
-                (pos.0 as isize + direction.0) as usize,
-                (pos.1 as isize + direction.1) as usize,
+            let next_pos: (usize, usize) = (
+                (front.pos.0 as isize + direction.0) as usize,
+                (front.pos.1 as isize + direction.1) as usize,
             );
 
-            // print!("\n  {:?}: ", target);
-
-            match visited.get(&target) {
-                Some(i) => {
-                    if front.depth > *i {
-                        continue;
-                    }
-                },
-                None => {
-                    visited.insert(target, front.depth+1);
-                }
+            if map[next_pos.1][next_pos.0] != Pos::Air && map[next_pos.1][next_pos.0] != Pos::End {
+                continue;
             }
             
-            if map[target.1][target.0] == Pos::Air || map[target.1][target.0] == Pos::End {
+            let next_dir = Direction::to_enum(i as i32);
+            let next_cost = front.cost + 1 + (front.dir.difference(&next_dir) as u64) * 1000;
 
-                let new_dir = Direction::to_enum(i as i32);
-                let new_cost = front.cost + 1 + (front.dir.difference(&new_dir) as u64) * 1000;
+            let next_best_cost = cost_map.get(&(next_pos, next_dir)).unwrap_or(&u64::MAX);
 
-                if target == DEBUG_POS {
-                    println!("from {:?} ({}) facing {:?} moving {:?} cost is {}", pos, front.cost, front.dir, new_dir, new_cost);
-                }
-
-                match parents.get_mut(&target) {
-                    Some(t) => {
-                        t.push(pos);
-                    },
-                    None => {
-                        parents.insert(target, vec![pos]);
-                    }
-                }
-                
-                queue.push_back(PathfindingPosition { pos: target, dir: new_dir, cost: new_cost, depth: front.depth + 1});
+            // are we outperforming the current cheapest way to get there?
+            if next_cost < *next_best_cost {
+                cost_map.insert((next_pos, next_dir), next_cost);
+                parents.insert((next_pos, next_dir), vec![(front.pos, front.dir)]);
+                queue.push(Reverse(PathfindingPosition{pos: next_pos, dir: next_dir, cost: next_cost}));
+            } else if next_cost == *next_best_cost {
+                parents.entry((next_pos, next_dir)).or_default().push((front.pos, front.dir));
+                // queue.push(Reverse(PathfindingPosition{pos: next_pos, dir: next_dir, cost: next_cost}));
             }
         }
-        // println!("");
-        queue = radix_sort(&queue);
     }
 
     println!("Backtracking");
 
-    let mut queue: Vec<(usize, usize)> = [end].into();
-    let mut index = 0;
+    // println!("{:?}\n\n{:?}\n\n", parents, cost_map);
 
-    while index < queue.len() {
-        let front = queue[index];
+    let mut set: HashSet<(usize, usize)> = [end_states[0].0].into();
+    let mut checked_states: HashSet<((usize, usize), Direction)> = [].into();
+    let mut queue: VecDeque<((usize, usize), Direction)> = end_states.into();
 
-        let parents = match parents.get(&front) {
+    while queue.len() > 0 {
+        let front: ((usize, usize), Direction) = match queue.pop_front() {
             Some(t) => t,
-            None => {index += 1; continue}
+            None => break,
         };
 
-        for i in parents {
-            if !queue.contains(i) {
-                queue.push(*i);
-            }
+        // if we checked this state, skip
+        if checked_states.contains(&front) {
+            continue;
         }
-        index += 1;
-    }
 
-    return queue;
-}
+        checked_states.insert(front);
+        set.insert(front.0); // this state, since it comes from end and end contains only sthe shortest paths, has to be correct
 
+        let parents = match parents.get(&front) { // get the parents of the state
+            Some(t) => t,
+            None => continue
+        };
 
-
-fn radix_sort(vec: &VecDeque<PathfindingPosition>) -> VecDeque<PathfindingPosition> {
-    let mut max = 0;
-    let mut output: VecDeque<PathfindingPosition> = vec.clone();
-    for item in vec {
-        if item.cost > max {
-            max = item.cost;
+        for parent in parents { // push them to the queue
+            queue.push_back(*parent);
         }
+
     }
 
-    let mut place = 1;
-
-    while place <= max {
-        output = counting_sort(&output, place);
-        place *= 10;
-    }
-
-    return output;
-}
-
-fn counting_sort(vec: &VecDeque<PathfindingPosition>, place: u64) -> VecDeque<PathfindingPosition> {
-    let mut output: VecDeque<PathfindingPosition> = vec![PathfindingPosition { pos: (0, 0), dir: Direction::North, cost: 0, depth: 0}; vec.len()].into();
-    let mut count: [i32; 10] = [0; 10];
-
-    for i in vec {
-        let digit = (i.cost / place) % 10;
-        count[digit as usize] += 1;
-    }
-
-    for i in 1..10 {
-        count[i] = count[i] + count[i - 1];
-    }
-
-    for i in 0..vec.len() {
-        let item = &vec[vec.len()-i-1];
-
-        let digit = (item.cost / place) % 10;
-        count[digit as usize] -= 1;
-        output[count[digit as usize] as usize] = item.clone();
-    }
-
-    return output;
-}
+    return set;
+}   
