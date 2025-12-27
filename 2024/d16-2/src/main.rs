@@ -259,4 +259,4 @@ fn crawl_path(map: &Vec<Vec<Pos>>, start: (usize, usize), end: (usize, usize), f
     }
 
     return set;
-}   
+}
